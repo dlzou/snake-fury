@@ -12,7 +12,7 @@ import EventQueue (
   readEvent,
   writeUserInput,
  )
-import GameState (GameState (movement), move, opositeMovement)
+import GameState (GameState (movement), move, oppositeMovement)
 import Initialization (gameInitialization)
 import RenderState (BoardInfo, RenderState (gameOver), render, updateRenderState)
 import System.Environment (getArgs)
@@ -33,7 +33,7 @@ gameloop binf gstate rstate queue = do
         case event of
           Tick -> move binf gstate
           UserEvent m ->
-            if movement gstate == opositeMovement m
+            if movement gstate == oppositeMovement m
               then move binf gstate
               else move binf $ gstate{movement = m}
   let rstate' = updateRenderState rstate delta

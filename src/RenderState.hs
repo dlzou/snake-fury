@@ -1,4 +1,3 @@
-
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE BangPatterns #-}
 
@@ -26,6 +25,7 @@ module RenderState where
 -- This are all imports you need. Feel free to import more things.
 import Data.Array ( (//), listArray, Array, elems )
 import Data.Foldable ( foldl' )
+import Control.Monad.RWS (MonadState(state))
 
 -- A point is just a tuple of integers.
 type Point = (Int, Int)
@@ -51,13 +51,14 @@ data RenderState   = RenderState {board :: Board, gameOver :: Bool} deriving Sho
 
 -- | Given The board info, this function should return a board with all Empty cells
 emptyGrid :: BoardInfo -> Board
-emptyGrid = undefined
+emptyGrid (BoardInfo h w) = listArray ((1, 1), (h, w)) (replicate (h * w) Empty)
 
 {- 
 This is a test for emptyGrid. It should return 
 array ((1,1),(2,2)) [((1,1),Empty),((1,2),Empty),((2,1),Empty),((2,2),Empty)]
 -}
 -- >>> emptyGrid (BoardInfo 2 2)
+-- array ((1,1),(2,2)) [((1,1),Empty),((1,2),Empty),((2,1),Empty),((2,2),Empty)]
 
 
 -- | Given BoardInfo, initial point of snake and initial point of apple, builds a board
@@ -66,18 +67,25 @@ buildInitialBoard
   -> Point     -- ^ initial point of the snake
   -> Point     -- ^ initial Point of the apple
   -> RenderState
-buildInitialBoard = undefined
+buildInitialBoard info pSnake pApple = 
+  RenderState {board = initBoard, gameOver = False}
+  where
+    initBoard = emptyGrid info // [(pSnake, SnakeHead), (pApple, Apple)]
 
 {- 
 This is a test for buildInitialBoard. It should return 
 RenderState {board = array ((1,1),(2,2)) [((1,1),SnakeHead),((1,2),Empty),((2,1),Empty),((2,2),Apple)], gameOver = False}
 -}
 -- >>> buildInitialBoard (BoardInfo 2 2) (1,1) (2,2)
+-- RenderState {board = array ((1,1),(2,2)) [((1,1),SnakeHead),((1,2),Empty),((2,1),Empty),((2,2),Apple)], gameOver = False}
 
 
--- | Given tye current render state, and a message -> update the render state
+-- | Given the current render state, and a message -> update the render state
 updateRenderState :: RenderState -> RenderMessage -> RenderState
-updateRenderState = undefined
+updateRenderState oldState@(RenderState oldBoard _) msg =
+  case msg of
+    (RenderBoard delta) -> oldState {board = oldBoard//delta}
+    GameOver -> oldState {gameOver = True}
 
 {-
 This is a test for updateRenderState
@@ -93,6 +101,8 @@ RenderState {board = array ((1,1),(2,2)) [((1,1),SnakeHead),((1,2),Empty),((2,1)
 -- >>> message2 = GameOver
 -- >>> updateRenderState initial_board message1
 -- >>> updateRenderState initial_board message2
+-- RenderState {board = array ((1,1),(2,2)) [((1,1),Empty),((1,2),SnakeHead),((2,1),Apple),((2,2),Apple)], gameOver = False}
+-- RenderState {board = array ((1,1),(2,2)) [((1,1),SnakeHead),((1,2),Empty),((2,1),Empty),((2,2),Apple)], gameOver = True}
 
 
 -- | Provisional Pretty printer
@@ -102,15 +112,30 @@ RenderState {board = array ((1,1),(2,2)) [((1,1),SnakeHead),((1,2),Empty),((2,1)
 --     Snake -> "0 "
 --     SnakeHead -> "$ "
 --     Apple -> "X "
---   In other to avoid shrinking, I'd recommend to use some charachter followed by an space.
+--   In order to avoid shrinking, I'd recommend to use some charachter followed by an space.
 ppCell :: CellType -> String
-ppCell = undefined
+ppCell c =
+  case c of
+    Empty -> "- "
+    Snake -> "O "
+    SnakeHead -> "$ "
+    Apple -> "X "
 
 
 -- | convert the RenderState in a String ready to be flushed into the console.
 --   It should return the Board with a pretty look. If game over, return the empty board.
 render :: BoardInfo -> RenderState -> String
-render = undefined
+render info@(BoardInfo h w) (RenderState curBoard curGameOver) = 
+  render' 1 1 (elems nextBoard)
+  where 
+    nextBoard = if curGameOver then emptyGrid info else curBoard
+    render' _ _ [] = ""
+    render' y x (c0:cs)
+      | null cs = ppCell c0 ++ "\n"
+      | y <= h && x < w = ppCell c0 ++ render' y (x + 1) cs
+      | y <= h && x == w = ppCell c0 ++ "\n" ++ render' (y + 1) 1 cs
+      | otherwise = ""
+
 
 {-
 This is a test for render. It should return:
@@ -122,4 +147,4 @@ Notice, that this depends on what you've chosen for ppCell
 -- >>> board_info = BoardInfo 3 4
 -- >>> render_state = RenderState board  False
 -- >>> render board_info render_state
--- "- - - - \n- 0 $ - \n- - - X \n"
+-- "- - - - \n- O $ - \n- - - X \n"
