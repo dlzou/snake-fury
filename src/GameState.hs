@@ -8,7 +8,7 @@ import RenderState (BoardInfo (..), Point, DeltaBoard)
 import qualified RenderState as Board
 import Data.Sequence ( Seq(..))
 import qualified Data.Sequence as S
-import System.Random ( uniformR, RandomGen(split), StdGen, Random (randomR))
+import System.Random (uniformR, RandomGen(split), StdGen)
 import Data.Maybe (isJust)
 
 -- The movement is one of this.
@@ -134,25 +134,26 @@ newApple binfo state@(GameState ss apos _ gen) =
 --        - 0 $ X          - 0 0 $
 -- We need to send the following delta: [((2,2), Apple), ((4,3), Snake), ((4,4), SnakeHead)]
 -- 
-move :: BoardInfo -> GameState -> (Board.RenderMessage , GameState)
+move :: BoardInfo -> GameState -> ([Board.RenderMessage], GameState)
 move info state@(GameState (SnakeSeq sHead sBody) apple _ _)
-  | gameOver = (Board.GameOver, state)
+  | gameOver = ([Board.GameOver], state)
   | nHead == apple =
     let (nApple, gen') = newApple info state in
-      ( Board.RenderBoard [(apple, Board.SnakeHead), (sHead, Board.Snake), (nApple, Board.Apple)]
+      ( [ Board.RenderBoard [(apple, Board.SnakeHead), (sHead, Board.Snake), (nApple, Board.Apple)]
+        , Board.ScoreUp]
       , state {snakeSeq = SnakeSeq nHead (sHead :<| sBody), applePosition = nApple, randomGen = gen'}
       )
   | otherwise = case sBody of
     S.Empty -> 
-      ( Board.RenderBoard [(nHead, Board.SnakeHead), (sHead, Board.Empty)]
+      ( [Board.RenderBoard [(nHead, Board.SnakeHead), (sHead, Board.Empty)]]
       , state {snakeSeq = SnakeSeq nHead sBody}
       )
     b0 :<| S.Empty -> 
-      ( Board.RenderBoard [(nHead, Board.SnakeHead), (sHead, Board.Snake), (b0, Board.Empty)]
+      ( [Board.RenderBoard [(nHead, Board.SnakeHead), (sHead, Board.Snake), (b0, Board.Empty)]]
       , state {snakeSeq = SnakeSeq nHead (S.singleton sHead)}
       )
     bs :|> b1 -> 
-      ( Board.RenderBoard [(nHead, Board.SnakeHead), (sHead, Board.Snake), (b1, Board.Empty)]
+      ( [Board.RenderBoard [(nHead, Board.SnakeHead), (sHead, Board.Snake), (b1, Board.Empty)]]
       , state {snakeSeq = SnakeSeq nHead (sHead :<| bs)}
       )
   where 

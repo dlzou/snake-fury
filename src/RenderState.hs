@@ -26,6 +26,7 @@ module RenderState where
 import Data.Array ( (//), listArray, Array, elems )
 import Data.Foldable ( foldl' )
 import Control.Monad.RWS (MonadState(state))
+import Data.ByteString.Builder (Builder, intDec)
 
 -- A point is just a tuple of integers.
 type Point = (Int, Int)
@@ -44,10 +45,10 @@ type DeltaBoard = [(Point, CellType)]
 -- | The render message represent all message the GameState can send to the RenderState
 --   Right now Possible messages are a RenderBoard with a payload indicating which cells change
 --   or a GameOver message.
-data RenderMessage = RenderBoard DeltaBoard | GameOver deriving Show
+data RenderMessage = RenderBoard DeltaBoard | GameOver | ScoreUp deriving Show
 
 -- | The RenderState contains the board and if the game is over or not.
-data RenderState   = RenderState {board :: Board, gameOver :: Bool} deriving Show
+data RenderState   = RenderState {board :: Board, gameOver :: Bool, score :: Int} deriving Show
 
 -- | Given The board info, this function should return a board with all Empty cells
 emptyGrid :: BoardInfo -> Board
@@ -68,7 +69,7 @@ buildInitialBoard
   -> Point     -- ^ initial Point of the apple
   -> RenderState
 buildInitialBoard info pSnake pApple = 
-  RenderState {board = initBoard, gameOver = False}
+  RenderState {board = initBoard, gameOver = False, score = 0}
   where
     initBoard = emptyGrid info // [(pSnake, SnakeHead), (pApple, Apple)]
 
@@ -82,10 +83,11 @@ RenderState {board = array ((1,1),(2,2)) [((1,1),SnakeHead),((1,2),Empty),((2,1)
 
 -- | Given the current render state, and a message -> update the render state
 updateRenderState :: RenderState -> RenderMessage -> RenderState
-updateRenderState oldState@(RenderState oldBoard _) msg =
+updateRenderState oldState@(RenderState oldBoard _ oldScore) msg =
   case msg of
     (RenderBoard delta) -> oldState {board = oldBoard//delta}
     GameOver -> oldState {gameOver = True}
+    ScoreUp -> oldState {score = oldScore + 1}
 
 {-
 This is a test for updateRenderState
@@ -105,6 +107,11 @@ RenderState {board = array ((1,1),(2,2)) [((1,1),SnakeHead),((1,2),Empty),((2,1)
 -- RenderState {board = array ((1,1),(2,2)) [((1,1),SnakeHead),((1,2),Empty),((2,1),Empty),((2,2),Apple)], gameOver = True}
 
 
+-- | Update render state given multiple messages
+updateMessages :: RenderState -> [RenderMessage] -> RenderState
+updateMessages = foldl' updateRenderState
+
+
 -- | Provisional Pretty printer
 --   For each cell type choose a string to representing. 
 --   a good option is
@@ -113,7 +120,7 @@ RenderState {board = array ((1,1),(2,2)) [((1,1),SnakeHead),((1,2),Empty),((2,1)
 --     SnakeHead -> "$ "
 --     Apple -> "X "
 --   In order to avoid shrinking, I'd recommend to use some charachter followed by an space.
-ppCell :: CellType -> String
+ppCell :: CellType -> Builder
 ppCell c =
   case c of
     Empty -> "- "
@@ -122,20 +129,22 @@ ppCell c =
     Apple -> "X "
 
 
+-- | Score pretty printer
+ppScore :: Int -> Builder
+ppScore s = "Score: " <> intDec s <> "\n"
+
+
 -- | convert the RenderState in a String ready to be flushed into the console.
 --   It should return the Board with a pretty look. If game over, return the empty board.
-render :: BoardInfo -> RenderState -> String
-render info@(BoardInfo h w) (RenderState curBoard curGameOver) = 
-  render' 1 1 (elems nextBoard)
+render :: BoardInfo -> RenderState -> Builder
+render info@(BoardInfo h w) (RenderState curBoard curGameOver curScore) = 
+  fst $ foldl' render' (ppScore curScore, 0) nextBoard
   where 
     nextBoard = if curGameOver then emptyGrid info else curBoard
-    render' _ _ [] = ""
-    render' y x (c0:cs)
-      | null cs = ppCell c0 ++ "\n"
-      | y <= h && x < w = ppCell c0 ++ render' y (x + 1) cs
-      | y <= h && x == w = ppCell c0 ++ "\n" ++ render' (y + 1) 1 cs
-      | otherwise = ""
-
+    render' (!str, !i) cell = 
+      if (i + 1) `mod` w == 0 
+      then (str <> ppCell cell <> "\n", i + 1)
+      else (str <> ppCell cell, i + 1)
 
 {-
 This is a test for render. It should return:
@@ -145,6 +154,6 @@ Notice, that this depends on what you've chosen for ppCell
 -}
 -- >>> board = listArray ((1,1), (3,4)) [Empty, Empty, Empty, Empty, Empty, Snake, SnakeHead, Empty, Empty, Empty, Empty, Apple]
 -- >>> board_info = BoardInfo 3 4
--- >>> render_state = RenderState board  False
+-- >>> render_state = RenderState board False 0
 -- >>> render board_info render_state
--- "- - - - \n- O $ - \n- - - X \n"
+-- "Score: 0\n- - - - \n- O $ - \n- - - X \n"
