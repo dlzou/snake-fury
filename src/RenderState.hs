@@ -143,8 +143,8 @@ render info@(BoardInfo h w) (RenderState curBoard curGameOver curScore) =
     nextBoard = if curGameOver then emptyGrid info else curBoard
     render' (!str, !i) cell = 
       if (i + 1) `mod` w == 0 
-      then (str <> ppCell cell <> "\n", i + 1)
-      else (str <> ppCell cell, i + 1)
+        then (str <> ppCell cell <> "\n", i + 1)
+        else (str <> ppCell cell, i + 1)
 
 {-
 This is a test for render. It should return:

@@ -1,3 +1,4 @@
+{-# LANGUAGE MultiWayIf #-}
 {-|
 This module defines the logic of the game and the communication with the `Board.RenderState`
 -}
@@ -10,6 +11,7 @@ import Data.Sequence ( Seq(..))
 import qualified Data.Sequence as S
 import System.Random (uniformR, RandomGen(split), StdGen)
 import Data.Maybe (isJust)
+import Control.Monad.Trans.State.Strict (State, get, put, modify, gets, runState)
 
 -- The movement is one of this.
 data Movement = North | South | East | West deriving (Show, Eq)
@@ -30,6 +32,10 @@ data GameState = GameState
   }
   deriving (Show, Eq)
 
+-- | State monad for GameState
+type GameStep a = State GameState a
+
+
 -- | This function should calculate the opposite movement.
 oppositeMovement :: Movement -> Movement
 oppositeMovement North = South
@@ -46,12 +52,22 @@ oppositeMovement West = East
 -- | Purely creates a random point within the board limits
 --   You should take a look to System.Random documentation. 
 --   Also, in the import list you have all relevant functions.
-makeRandomPoint :: BoardInfo -> StdGen -> (Point, StdGen)
-makeRandomPoint (BoardInfo h w) gen = ((y, x), gen1')
-  where
-    (gen1, gen2) = split gen
-    (y, gen1') = uniformR (1, h) gen1
-    (x, _) = uniformR (1, w) gen2
+-- makeRandomPoint :: BoardInfo -> GameState -> (Point, GameState)
+-- makeRandomPoint (BoardInfo h w) state@(GameState _ _ _ gen) =
+--   let
+--     (gen1, gen2) = split gen
+--     (y, gen1') = uniformR (1, h) gen1
+--     (x, _) = uniformR (1, w) gen2
+--   in ((y, x), state {randomGen = gen1'})
+
+makeRandomPoint :: BoardInfo -> GameStep Point
+makeRandomPoint (BoardInfo h w) = do
+  state@(GameState _ _ _ gen) <- get
+  let (gen1, gen2) = split gen
+  let (y, gen1') = uniformR (1, h) gen1
+  let (x, _) = uniformR (1, w) gen2
+  put state {randomGen = gen1'}
+  return (y, x)
 
 {-
 We can't test makeRandomPoint, because different implementation may lead to different valid result.
@@ -108,14 +124,69 @@ True
 
 
 -- | Calculates a new random apple, avoiding creating the apple in the same place, or in the snake body
-newApple :: BoardInfo -> GameState -> (Point, StdGen)
-newApple binfo state@(GameState ss apos _ gen) =
+-- newApple :: BoardInfo -> GameState -> (Point, GameState)
+-- newApple binfo state@(GameState ss apos _ _) =
+--   if inSnake p ss || p == apos
+--     then newApple binfo state
+--     else (p, state' {applePosition = p})
+--   where (p, state') = makeRandomPoint binfo state
+
+newApple :: BoardInfo -> GameStep Point
+newApple info = do
+  p <- makeRandomPoint info
+  state@(GameState ss apos _ _) <- get
   if inSnake p ss || p == apos
-  then newApple binfo state{randomGen = gen'}
-  else (p, gen')
-  where (p, gen') = makeRandomPoint binfo gen
+    then newApple info
+    else put state {applePosition = p} >> return p
+
 
 {- We can't test this function because it depends on makeRandomPoint -}
+
+
+-- | Extend the current snake, appending the new head
+-- extendSnake :: Point -> BoardInfo -> GameState -> (RenderState.DeltaBoard, GameState)
+-- extendSnake newHead _ state@(GameState (SnakeSeq sHead sBody) _ _ _) = 
+--   ( [(newHead, Board.SnakeHead), (sHead, Board.Snake)]
+--   , state {snakeSeq = SnakeSeq newHead (sHead :<| sBody)}
+--   )
+
+extendSnake :: Point -> BoardInfo -> GameStep RenderState.DeltaBoard
+extendSnake newHead _ = do
+  state@(GameState (SnakeSeq sHead sBody) _ _ _) <- get
+  put state {snakeSeq = SnakeSeq newHead (sHead :<| sBody)}
+  return [(newHead, Board.SnakeHead), (sHead, Board.Snake)]
+
+
+-- | Displace the current snake by appending the new head and removing the tail
+-- displaceSnake :: Point -> BoardInfo -> GameState -> (RenderState.DeltaBoard, GameState)
+-- displaceSnake newHead _ state@(GameState (SnakeSeq sHead sBody) _ _ _) =
+--   case sBody of
+--   S.Empty -> 
+--     ( [(newHead, Board.SnakeHead), (sHead, Board.Empty)]
+--     , state {snakeSeq = SnakeSeq newHead sBody}
+--     )
+--   b0 :<| S.Empty -> 
+--     ( [(newHead, Board.SnakeHead), (sHead, Board.Snake), (b0, Board.Empty)]
+--     , state {snakeSeq = SnakeSeq newHead (S.singleton sHead)}
+--     )
+--   bs :|> b1 -> 
+--     ( [(newHead, Board.SnakeHead), (sHead, Board.Snake), (b1, Board.Empty)]
+--     , state {snakeSeq = SnakeSeq newHead (sHead :<| bs)}
+--     )
+
+displaceSnake :: Point -> BoardInfo -> GameStep RenderState.DeltaBoard
+displaceSnake newHead _ = do
+  state@(GameState (SnakeSeq sHead sBody) _ _ _) <- get
+  case sBody of
+    S.Empty ->
+      put state {snakeSeq = SnakeSeq newHead sBody} >>
+      return [(newHead, Board.SnakeHead), (sHead, Board.Empty)]
+    b0 :<| S.Empty ->
+      put state {snakeSeq = SnakeSeq newHead (S.singleton sHead)} >>
+      return [(newHead, Board.SnakeHead), (sHead, Board.Snake), (b0, Board.Empty)]
+    bs :|> b1 ->
+      put state {snakeSeq = SnakeSeq newHead (sHead :<| bs)} >>
+      return [(newHead, Board.SnakeHead), (sHead, Board.Snake), (b1, Board.Empty)]
 
 
 -- | Moves the snake based on the current direction. It sends the adequate RenderMessage
@@ -134,31 +205,39 @@ newApple binfo state@(GameState ss apos _ gen) =
 --        - 0 $ X          - 0 0 $
 -- We need to send the following delta: [((2,2), Apple), ((4,3), Snake), ((4,4), SnakeHead)]
 -- 
+-- move :: BoardInfo -> GameState -> ([Board.RenderMessage], GameState)
+-- move info state@(GameState (SnakeSeq _ sBody) apple _ _)
+--   | gameOver = ([Board.GameOver], state)
+--   | newHead == apple =
+--     let
+--       (delta, state1) = extendSnake newHead info state
+--       (point, state2) = newApple info state1
+--     in ([Board.RenderBoard (delta ++ [(point, Board.Apple)]), Board.ScoreUp], state2)
+--   | otherwise = 
+--     let (delta, state1) = displaceSnake newHead info state
+--     in ([Board.RenderBoard delta], state1)
+--   where
+--     newHead = nextHead info state
+--     gameOver = newHead `elem` sBody
+
+step :: BoardInfo -> GameStep [Board.RenderMessage]
+step info = do
+  state@(GameState (SnakeSeq _ sBody) apple _ _) <- get
+  let newHead = nextHead info state
+  let gameOver = newHead `elem` sBody
+  if
+    | gameOver -> return [Board.GameOver]
+    | newHead == apple -> do
+      delta <- extendSnake newHead info
+      point <- newApple info
+      return [Board.RenderBoard (delta ++ [(point, Board.Apple)]), Board.ScoreUp]
+    | otherwise -> do
+      delta <- displaceSnake newHead info
+      return [Board.RenderBoard delta]
+
 move :: BoardInfo -> GameState -> ([Board.RenderMessage], GameState)
-move info state@(GameState (SnakeSeq sHead sBody) apple _ _)
-  | gameOver = ([Board.GameOver], state)
-  | nHead == apple =
-    let (nApple, gen') = newApple info state in
-      ( [ Board.RenderBoard [(apple, Board.SnakeHead), (sHead, Board.Snake), (nApple, Board.Apple)]
-        , Board.ScoreUp]
-      , state {snakeSeq = SnakeSeq nHead (sHead :<| sBody), applePosition = nApple, randomGen = gen'}
-      )
-  | otherwise = case sBody of
-    S.Empty -> 
-      ( [Board.RenderBoard [(nHead, Board.SnakeHead), (sHead, Board.Empty)]]
-      , state {snakeSeq = SnakeSeq nHead sBody}
-      )
-    b0 :<| S.Empty -> 
-      ( [Board.RenderBoard [(nHead, Board.SnakeHead), (sHead, Board.Snake), (b0, Board.Empty)]]
-      , state {snakeSeq = SnakeSeq nHead (S.singleton sHead)}
-      )
-    bs :|> b1 -> 
-      ( [Board.RenderBoard [(nHead, Board.SnakeHead), (sHead, Board.Snake), (b1, Board.Empty)]]
-      , state {snakeSeq = SnakeSeq nHead (sHead :<| bs)}
-      )
-  where 
-    nHead = nextHead info state
-    gameOver = nHead `elem` sBody
+move info = runState (step info)
+
 
 {- This is a test for move. It should return
 
